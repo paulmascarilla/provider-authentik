@@ -13,6 +13,7 @@ require (
 	github.com/crossplane/crossplane-runtime/v2 v2.0.0
 	github.com/google/go-cmp v0.7.0
 	github.com/pkg/errors v0.9.1
+	goauthentik.io/api/v3 v3.2026020.16
 	google.golang.org/grpc v1.74.2
 	k8s.io/apiextensions-apiserver v0.33.0
 	k8s.io/apimachinery v0.33.3
