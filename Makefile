@@ -96,13 +96,6 @@ dev: $(KIND) $(KUBECTL)
 	@$(INFO) Creating kind cluster
 	@$(KIND) create cluster --name=$(PROJECT_NAME)-dev
 	@$(KUBECTL) cluster-info --context kind-$(PROJECT_NAME)-dev
-	@$(INFO) Installing Authentik via Helm
-	@$(HELM) repo add authentik https://charts.goauthentik.io
-	@$(HELM) repo update
-	@$(HELM) upgrade --install authentik authentik/authentik \
-        --namespace authentik --create-namespace \
-        -f cluster/local/authentik-values.yaml \
-        --wait
 	@$(INFO) Installing Provider Authentik CRDs
 	@$(KUBECTL) apply -R -f package/crds
 	@$(INFO) Starting Provider Authentik controllers
