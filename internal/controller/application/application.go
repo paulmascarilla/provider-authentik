@@ -18,51 +18,112 @@ package application
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
+	"strings"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/feature"
 
-	"github.com/pkg/errors"
-	"k8s.io/apimachinery/pkg/types"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
+	xpv1 "github.com/crossplane/crossplane-runtime/v2/apis/common/v1"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/controller"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/event"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/ratelimiter"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/statemetrics"
+	"github.com/pkg/errors"
+	goauthentik "goauthentik.io/api/v3"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1alpha1 "github.com/crossplane/provider-authentik/apis/core/v1alpha1"
 	apisv1alpha1 "github.com/crossplane/provider-authentik/apis/v1alpha1"
 )
 
 const (
-	errNotApplication   = "managed resource is not a Application custom resource"
-	errTrackPCUsage = "cannot track ProviderConfig usage"
-	errGetPC    = "cannot get ProviderConfig"
-	errGetCPC   = "cannot get ClusterProviderConfig"
-	errGetCreds = "cannot get credentials"
+	errNotApplication = "managed resource is not a Application custom resource"
+	errTrackPCUsage   = "cannot track ProviderConfig usage"
+	errGetPC          = "cannot get ProviderConfig"
+	errGetCPC         = "cannot get ClusterProviderConfig"
+	errGetCreds       = "cannot get credentials"
+	errNewClient      = "cannot create new Service"
 
-	errNewClient = "cannot create new Service"
+	errObserveApp  = "cannot observe Application"
+	errCreateApp   = "cannot create Application"
+	errUpdateApp   = "cannot update Application"
+	errDeleteApp   = "cannot delete Application"
+	errAppNotFound = "Application not found"
 )
 
-// A NoOpService does nothing.
-type NoOpService struct{}
+func stringPtrEq(a, b *string) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
 
-var (
-	newNoOpService = func(_ []byte) (interface{}, error) { return &NoOpService{}, nil }
-)
+func nullableStringEq(a goauthentik.NullableString, b *string) bool {
+	aVal := a.Get()
+	if aVal == nil && b == nil {
+		return true
+	}
+	if aVal == nil || b == nil {
+		return false
+	}
+	return *aVal == *b
+}
+
+func boolPtrEq(a, b *bool) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+// AuthentikService wraps the authentik API client
+type AuthentikService struct {
+	client *goauthentik.APIClient
+}
+
+func newAuthentikService(endpoint string, creds []byte) (interface{}, error) {
+	token := string(creds)
+
+	cfg := goauthentik.NewConfiguration()
+	if strings.HasPrefix(endpoint, "http://") {
+		cfg.Scheme = "http"
+		cfg.Host = strings.TrimPrefix(endpoint, "http://")
+	} else {
+		cfg.Scheme = "https"
+		cfg.Host = strings.TrimPrefix(endpoint, "https://")
+	}
+	cfg.AddDefaultHeader("Authorization", "Bearer "+token)
+	cfg.HTTPClient = &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	return &AuthentikService{
+		client: goauthentik.NewAPIClient(cfg),
+	}, nil
+}
 
 // SetupGated adds a controller that reconciles Application managed resources with safe-start support.
 func SetupGated(mgr ctrl.Manager, o controller.Options) error {
-	o.Gate.Register(func() {
-		if err := Setup(mgr, o); err != nil {
-			panic(errors.Wrap(err, "cannot setup Application controller"))
-		}
-	}, v1alpha1.ApplicationGroupVersionKind)
-	return nil
+	// o.Gate.Register(func() {
+	// 	if err := Setup(mgr, o); err != nil {
+	// 		panic(errors.Wrap(err, "cannot setup Application controller"))
+	// 	}
+	// }, v1alpha1.ApplicationGroupVersionKind)
+	return Setup(mgr, o)
 }
 
 func Setup(mgr ctrl.Manager, o controller.Options) error {
@@ -72,7 +133,8 @@ func Setup(mgr ctrl.Manager, o controller.Options) error {
 		managed.WithExternalConnector(&connector{
 			kube:         mgr.GetClient(),
 			usage:        resource.NewProviderConfigUsageTracker(mgr.GetClient(), &apisv1alpha1.ProviderConfigUsage{}),
-			newServiceFn: newNoOpService}),
+			newServiceFn: newAuthentikService,
+		}),
 		managed.WithLogger(o.Logger.WithValues("controller", name)),
 		managed.WithPollInterval(o.PollInterval),
 		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))),
@@ -114,7 +176,7 @@ func Setup(mgr ctrl.Manager, o controller.Options) error {
 type connector struct {
 	kube         client.Client
 	usage        *resource.ProviderConfigUsageTracker
-	newServiceFn func(creds []byte) (interface{}, error)
+	newServiceFn func(endpoint string, creds []byte) (interface{}, error) // ← +endpoint
 }
 
 // Connect typically produces an ExternalClient by:
@@ -133,23 +195,24 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 	}
 
 	var cd apisv1alpha1.ProviderCredentials
+	var endpoint string
 
-	// Switch to ModernManaged resource to get ProviderConfigRef
-	m := mg.(resource.ModernManaged)
-	ref := m.GetProviderConfigReference()
+	ref := cr.GetProviderConfigReference()
 
 	switch ref.Kind {
 	case "ProviderConfig":
 		pc := &apisv1alpha1.ProviderConfig{}
-		if err := c.kube.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: m.GetNamespace()}, pc); err != nil {
+		if err := c.kube.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: cr.GetNamespace()}, pc); err != nil {
 			return nil, errors.Wrap(err, errGetPC)
 		}
+		endpoint = pc.Spec.Endpoint
 		cd = pc.Spec.Credentials
 	case "ClusterProviderConfig":
 		cpc := &apisv1alpha1.ClusterProviderConfig{}
 		if err := c.kube.Get(ctx, types.NamespacedName{Name: ref.Name}, cpc); err != nil {
 			return nil, errors.Wrap(err, errGetCPC)
 		}
+		endpoint = cpc.Spec.Endpoint
 		cd = cpc.Spec.Credentials
 	default:
 		return nil, errors.Errorf("unsupported provider config kind: %s", ref.Kind)
@@ -159,20 +222,18 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		return nil, errors.Wrap(err, errGetCreds)
 	}
 
-	svc, err := c.newServiceFn(data)
+	svc, err := c.newServiceFn(endpoint, data)
 	if err != nil {
 		return nil, errors.Wrap(err, errNewClient)
 	}
 
-	return &external{service: svc}, nil
+	return &external{service: svc.(*AuthentikService)}, nil
 }
 
 // An ExternalClient observes, then either creates, updates, or deletes an
 // external resource to ensure it reflects the managed resource's desired state.
 type external struct {
-	// A 'client' used to connect to the external resource API. In practice this
-	// would be something like an AWS SDK client.
-	service interface{}
+	service *AuthentikService
 }
 
 func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.ExternalObservation, error) {
@@ -181,22 +242,49 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 		return managed.ExternalObservation{}, errors.New(errNotApplication)
 	}
 
-	// These fmt statements should be removed in the real implementation.
-	fmt.Printf("Observing: %+v", cr)
+	fmt.Printf("Observing Application: %s\n", cr.Spec.ForProvider.Slug)
+
+	if cr.GetDeletionTimestamp() != nil {
+		return managed.ExternalObservation{
+			ResourceExists: false,
+		}, nil
+	}
+
+	apps, _, err := c.service.client.CoreApi.CoreApplicationsList(ctx).Slug(cr.Spec.ForProvider.Slug).Execute()
+	if err != nil {
+		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found") {
+			return managed.ExternalObservation{
+				ResourceExists: false,
+			}, nil
+		}
+		return managed.ExternalObservation{}, errors.Wrap(err, errObserveApp)
+	}
+
+	if len(apps.Results) == 0 {
+		return managed.ExternalObservation{
+			ResourceExists: false,
+		}, nil
+	}
+
+	app := apps.Results[0]
+
+	cr.Status.SetConditions(xpv1.Available())
+	cr.Status.AtProvider = v1alpha1.ApplicationObservation{
+		ID: app.Pk,
+	}
+
+	upToDate := app.Name == cr.Spec.ForProvider.Name &&
+		app.Slug == cr.Spec.ForProvider.Slug &&
+		stringPtrEq(app.MetaDescription, cr.Spec.ForProvider.Description) &&
+		stringPtrEq(app.MetaPublisher, cr.Spec.ForProvider.Publisher) &&
+		stringPtrEq(app.Group, cr.Spec.ForProvider.Group) &&
+		nullableStringEq(app.LaunchUrl, cr.Spec.ForProvider.LaunchUrl) &&
+		stringPtrEq(app.MetaIcon, cr.Spec.ForProvider.IconUrl) &&
+		boolPtrEq(app.OpenInNewTab, cr.Spec.ForProvider.OpenInNewTab)
 
 	return managed.ExternalObservation{
-		// Return false when the external resource does not exist. This lets
-		// the managed resource reconciler know that it needs to call Create to
-		// (re)create the resource, or that it has successfully been deleted.
-		ResourceExists: true,
-
-		// Return false when the external resource exists, but it not up to date
-		// with the desired managed resource state. This lets the managed
-		// resource reconciler know that it needs to call Update.
-		ResourceUpToDate: true,
-
-		// Return any details that may be required to connect to the external
-		// resource. These will be stored as the connection secret.
+		ResourceExists:    true,
+		ResourceUpToDate:  upToDate,
 		ConnectionDetails: managed.ConnectionDetails{},
 	}, nil
 }
@@ -207,11 +295,35 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 		return managed.ExternalCreation{}, errors.New(errNotApplication)
 	}
 
-	fmt.Printf("Creating: %+v", cr)
+	fmt.Printf("Creating Application: %s\n", cr.Spec.ForProvider.Slug)
+
+	//convert int32 to SDK NullableInt32 type
+	var provider goauthentik.NullableInt32
+	if cr.Spec.ForProvider.Provider != nil {
+		provider = *goauthentik.NewNullableInt32(cr.Spec.ForProvider.Provider)
+	}
+
+	app := goauthentik.ApplicationRequest{
+		Name:                 cr.Spec.ForProvider.Name,
+		Slug:                 cr.Spec.ForProvider.Slug,
+		Provider:             provider,
+		BackchannelProviders: cr.Spec.ForProvider.BackchannelProviders,
+		OpenInNewTab:         cr.Spec.ForProvider.OpenInNewTab,
+		MetaLaunchUrl:        cr.Spec.ForProvider.LaunchUrl,
+		MetaIcon:             cr.Spec.ForProvider.IconUrl,
+		MetaDescription:      cr.Spec.ForProvider.Description,
+		MetaPublisher:        cr.Spec.ForProvider.Publisher,
+		Group:                cr.Spec.ForProvider.Group,
+	}
+
+	_, _, err := c.service.client.CoreApi.CoreApplicationsCreate(ctx).ApplicationRequest(app).Execute()
+	if err != nil {
+		return managed.ExternalCreation{}, errors.Wrap(err, errCreateApp)
+	}
+
+	cr.Status.SetConditions(xpv1.Creating())
 
 	return managed.ExternalCreation{
-		// Optionally return any details that may be required to connect to the
-		// external resource. These will be stored as the connection secret.
 		ConnectionDetails: managed.ConnectionDetails{},
 	}, nil
 }
@@ -222,11 +334,43 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 		return managed.ExternalUpdate{}, errors.New(errNotApplication)
 	}
 
-	fmt.Printf("Updating: %+v", cr)
+	fmt.Printf("Updating Application: %s\n", cr.Spec.ForProvider.Slug)
+
+	apps, _, err := c.service.client.CoreApi.CoreApplicationsList(ctx).Slug(cr.Spec.ForProvider.Slug).Execute()
+	if err != nil {
+		return managed.ExternalUpdate{}, errors.Wrap(err, errUpdateApp)
+	}
+
+	if len(apps.Results) == 0 {
+		return managed.ExternalUpdate{}, errors.New(errAppNotFound)
+	}
+
+	app := apps.Results[0]
+
+	var provider goauthentik.NullableInt32
+	if cr.Spec.ForProvider.Provider != nil {
+		provider = *goauthentik.NewNullableInt32(cr.Spec.ForProvider.Provider)
+	}
+
+	updateReq := goauthentik.ApplicationRequest{
+		Name:                 cr.Spec.ForProvider.Name,
+		Slug:                 cr.Spec.ForProvider.Slug,
+		Provider:             provider,
+		BackchannelProviders: cr.Spec.ForProvider.BackchannelProviders,
+		OpenInNewTab:         cr.Spec.ForProvider.OpenInNewTab,
+		MetaLaunchUrl:        cr.Spec.ForProvider.LaunchUrl,
+		MetaIcon:             cr.Spec.ForProvider.IconUrl,
+		MetaDescription:      cr.Spec.ForProvider.Description,
+		MetaPublisher:        cr.Spec.ForProvider.Publisher,
+		Group:                cr.Spec.ForProvider.Group,
+	}
+
+	_, _, err = c.service.client.CoreApi.CoreApplicationsUpdate(ctx, app.Slug).ApplicationRequest(updateReq).Execute()
+	if err != nil {
+		return managed.ExternalUpdate{}, errors.Wrap(err, errUpdateApp)
+	}
 
 	return managed.ExternalUpdate{
-		// Optionally return any details that may be required to connect to the
-		// external resource. These will be stored as the connection secret.
 		ConnectionDetails: managed.ConnectionDetails{},
 	}, nil
 }
@@ -237,7 +381,23 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) (managed.Ext
 		return managed.ExternalDelete{}, errors.New(errNotApplication)
 	}
 
-	fmt.Printf("Deleting: %+v", cr)
+	fmt.Printf("Deleting Application: %s\n", cr.Spec.ForProvider.Slug)
+
+	apps, _, err := c.service.client.CoreApi.CoreApplicationsList(ctx).Slug(cr.Spec.ForProvider.Slug).Execute()
+	if err != nil {
+		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found") {
+			return managed.ExternalDelete{}, nil
+		}
+		return managed.ExternalDelete{}, errors.Wrap(err, errDeleteApp)
+	}
+
+	if len(apps.Results) > 0 {
+		app := apps.Results[0]
+		_, err = c.service.client.CoreApi.CoreApplicationsDestroy(ctx, app.Slug).Execute()
+		if err != nil && !strings.Contains(err.Error(), "404") {
+			return managed.ExternalDelete{}, errors.Wrap(err, errDeleteApp)
+		}
+	}
 
 	return managed.ExternalDelete{}, nil
 }
