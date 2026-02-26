@@ -39,11 +39,11 @@ import (
 )
 
 const (
-	errNotOAuth2Provider   = "managed resource is not a OAuth2Provider custom resource"
-	errTrackPCUsage = "cannot track ProviderConfig usage"
-	errGetPC    = "cannot get ProviderConfig"
-	errGetCPC   = "cannot get ClusterProviderConfig"
-	errGetCreds = "cannot get credentials"
+	errNotOAuth2Provider = "managed resource is not a OAuth2Provider custom resource"
+	errTrackPCUsage      = "cannot track ProviderConfig usage"
+	errGetPC             = "cannot get ProviderConfig"
+	errGetCPC            = "cannot get ClusterProviderConfig"
+	errGetCreds          = "cannot get credentials"
 
 	errNewClient = "cannot create new Service"
 )

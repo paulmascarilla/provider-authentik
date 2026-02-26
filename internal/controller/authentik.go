@@ -20,8 +20,11 @@ import (
 	"github.com/crossplane/crossplane-runtime/v2/pkg/controller"
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	"github.com/crossplane/provider-authentik/internal/controller/application"
 	"github.com/crossplane/provider-authentik/internal/controller/config"
-	"github.com/crossplane/provider-authentik/internal/controller/mytype"
+	"github.com/crossplane/provider-authentik/internal/controller/group"
+	"github.com/crossplane/provider-authentik/internal/controller/oauth2provider"
+	"github.com/crossplane/provider-authentik/internal/controller/user"
 )
 
 // SetupGated creates all Authentik controllers with safe-start support and adds them to
@@ -29,7 +32,10 @@ import (
 func SetupGated(mgr ctrl.Manager, o controller.Options) error {
 	for _, setup := range []func(ctrl.Manager, controller.Options) error{
 		config.Setup,
-		mytype.SetupGated,
+		application.Setup,
+		group.Setup,
+		user.Setup,
+		oauth2provider.Setup,
 	} {
 		if err := setup(mgr, o); err != nil {
 			return err
