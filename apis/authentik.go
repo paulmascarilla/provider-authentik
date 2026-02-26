@@ -20,7 +20,8 @@ package apis
 import (
 	"k8s.io/apimachinery/pkg/runtime"
 
-	samplev1alpha1 "github.com/crossplane/provider-authentik/apis/sample/v1alpha1"
+	corev1alpha1 "github.com/crossplane/provider-authentik/apis/core/v1alpha1"
+	providersv1alpha1 "github.com/crossplane/provider-authentik/apis/providers/v1alpha1"
 	authentikv1alpha1 "github.com/crossplane/provider-authentik/apis/v1alpha1"
 )
 
@@ -28,7 +29,8 @@ func init() {
 	// Register the types with the Scheme so the components can map objects to GroupVersionKinds and back
 	AddToSchemes = append(AddToSchemes,
 		authentikv1alpha1.SchemeBuilder.AddToScheme,
-		samplev1alpha1.SchemeBuilder.AddToScheme,
+		corev1alpha1.SchemeBuilder.AddToScheme,
+		providersv1alpha1.SchemeBuilder.AddToScheme,
 	)
 }
 
