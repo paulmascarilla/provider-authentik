@@ -19,21 +19,33 @@ package v1alpha1
 import (
 	"reflect"
 
+	"github.com/crossplane/crossplane-runtime/v2/pkg/resource"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	xpv1 "github.com/crossplane/crossplane-runtime/v2/apis/common/v1"
+	xpv2 "github.com/crossplane/crossplane-runtime/v2/apis/common/v2"
 )
 
 // ApplicationParameters are the configurable fields of a Application.
 type ApplicationParameters struct {
-	ConfigurableField string `json:"configurableField"`
+	Name                 string  `json:"name"`
+	Slug                 string  `json:"slug"`
+	Provider             *int32  `json:"provider,omitempty"`
+	BackchannelProviders []int32 `json:"backchannelProviders,omitempty"`
+	OpenInNewTab         *bool   `json:"openInNewTab,omitempty"`
+	LaunchUrl            *string `json:"launchUrl,omitempty"`
+	IconUrl              *string `json:"iconUrl,omitempty"`
+	Description          *string `json:"description,omitempty"`
+	Publisher            *string `json:"publisher,omitempty"`
+	Group                *string `json:"group,omitempty"`
 }
 
 // ApplicationObservation are the observable fields of a Application.
 type ApplicationObservation struct {
-	ConfigurableField string `json:"configurableField"`
-	ObservableField   string `json:"observableField,omitempty"`
+	ID     string `json:"id,omitempty"`
+	Status string `json:"status,omitempty"`
 }
 
 // A ApplicationSpec defines the desired state of a Application.
@@ -65,6 +77,26 @@ type Application struct {
 	Status ApplicationStatus `json:"status,omitempty"`
 }
 
+// SetConditions sets the conditions of the Application's status.
+func (a *Application) SetConditions(c ...xpv1.Condition) {
+	a.Status.SetConditions(c...)
+}
+
+// GetCondition returns the condition of the given type from the Application's status.
+func (a *Application) GetCondition(ct xpv1.ConditionType) xpv1.Condition {
+	return a.Status.GetCondition(ct)
+}
+
+// GetManagementPolicies returns the ManagementPolicies from the embedded ManagedResourceSpec.
+func (a *Application) GetManagementPolicies() xpv1.ManagementPolicies {
+	return a.Spec.ManagementPolicies
+}
+
+// SetManagementPolicies sets the ManagementPolicies on the embedded ManagedResourceSpec.
+func (a *Application) SetManagementPolicies(p xpv1.ManagementPolicies) {
+	a.Spec.ManagementPolicies = p
+}
+
 // +kubebuilder:object:root=true
 
 // ApplicationList contains a list of Application
@@ -74,10 +106,19 @@ type ApplicationList struct {
 	Items           []Application `json:"items"`
 }
 
+// GetItems returns the list of Applications in the ApplicationList.
+func (al *ApplicationList) GetItems() []resource.Managed {
+	items := make([]resource.Managed, len(al.Items))
+	for i := range al.Items {
+		items[i] = &al.Items[i]
+	}
+	return items
+}
+
 // Application type metadata.
 var (
 	ApplicationKind             = reflect.TypeOf(Application{}).Name()
-	ApplicationGroupKind        = schema.GroupKind{Group: Group, Kind: ApplicationKind}.String()
+	ApplicationGroupKind        = schema.GroupKind{Group: CrossplaneGroup, Kind: ApplicationKind}.String()
 	ApplicationKindAPIVersion   = ApplicationKind + "." + SchemeGroupVersion.String()
 	ApplicationGroupVersionKind = SchemeGroupVersion.WithKind(ApplicationKind)
 )
