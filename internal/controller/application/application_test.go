@@ -25,6 +25,8 @@ import (
 	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/test"
+
+	"github.com/crossplane/provider-authentik/internal/authentik/application"
 )
 
 // Unlike many Kubernetes projects Crossplane does not use third party testing
@@ -37,7 +39,7 @@ import (
 
 func TestObserve(t *testing.T) {
 	type fields struct {
-		service interface{}
+		service application.ApplicationService
 	}
 
 	type args struct {
