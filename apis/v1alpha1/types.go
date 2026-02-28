@@ -21,6 +21,8 @@ type ProviderCredentials struct {
 }
 
 type ProviderConfigSpec struct {
+	// URL de l'instance Authentik
+	Endpoint string `json:"endpoint"`
 	// Credentials required to authenticate to this provider.
 	Credentials ProviderCredentials `json:"credentials"`
 }

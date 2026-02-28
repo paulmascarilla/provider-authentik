@@ -4,18 +4,18 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: mytypes.sample.authentik.crossplane.io
+  name: oauth2providers.providers.authentik.crossplane.io
 spec:
-  group: sample.authentik.crossplane.io
+  group: providers.authentik.crossplane.io
   names:
     categories:
     - crossplane
     - managed
     - authentik
-    kind: MyType
-    listKind: MyTypeList
-    plural: mytypes
-    singular: mytype
+    kind: OAuth2Provider
+    listKind: OAuth2ProviderList
+    plural: oauth2providers
+    singular: oauth2provider
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -34,7 +34,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: A MyType is an example API type.
+        description: A OAuth2Provider is an example API type.
         properties:
           apiVersion:
             description: |-
@@ -54,10 +54,11 @@ spec:
           metadata:
             type: object
           spec:
-            description: A MyTypeSpec defines the desired state of a MyType.
+            description: A OAuth2ProviderSpec defines the desired state of a OAuth2Provider.
             properties:
               forProvider:
-                description: MyTypeParameters are the configurable fields of a MyType.
+                description: OAuth2ProviderParameters are the configurable fields
+                  of a OAuth2Provider.
                 properties:
                   configurableField:
                     type: string
@@ -123,10 +124,12 @@ spec:
             - forProvider
             type: object
           status:
-            description: A MyTypeStatus represents the observed state of a MyType.
+            description: A OAuth2ProviderStatus represents the observed state of a
+              OAuth2Provider.
             properties:
               atProvider:
-                description: MyTypeObservation are the observable fields of a MyType.
+                description: OAuth2ProviderObservation are the observable fields of
+                  a OAuth2Provider.
                 properties:
                   configurableField:
                     type: string

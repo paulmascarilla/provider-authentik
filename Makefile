@@ -21,6 +21,7 @@ GO_LDFLAGS += -X $(GO_PROJECT)/internal/version.Version=$(VERSION)
 GO_SUBDIRS += cmd internal apis
 GO111MODULE = on
 GOLANGCILINT_VERSION = 2.1.2
+USE_HELM := true
 -include build/makelib/golang.mk
 
 # ====================================================================================

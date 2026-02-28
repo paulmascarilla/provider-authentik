@@ -107,8 +107,12 @@ spec:
                 required:
                 - source
                 type: object
+              endpoint:
+                description: URL de l'instance Authentik
+                type: string
             required:
             - credentials
+            - endpoint
             type: object
           status:
             description: A ProviderConfigStatus defines the status of a Provider.
